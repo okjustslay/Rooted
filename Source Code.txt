@@ -1,0 +1,2177 @@
+back end code:
+
+from rest_framework import serializers
+"""
+    Define serializers for the User model and for user registration.
+    The UserSerializer includes the fields 'id', 'username', and 'email' from the User model.
+    The RegisterSerializer includes the fields 'username', 'password', and 'email' for user registration. The password field is write-only.
+    The create method creates a new user with the provided validated data.
+    @param serializers - module for serializing Django models
+    @param User - Django User model
+    @return UserSerializer, RegisterSerializer
+    """
+from django.contrib.auth.models import User
+
+class UserSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = ['id', 'username', 'email']
+
+class RegisterSerializer(serializers.ModelSerializer):
+    password = serializers.CharField(write_only=True)
+
+    class Meta:
+        model = User
+        fields = ['username', 'password', 'email']
+
+    def create(self, validated_data):
+        user = User.objects.create_user(
+            username=validated_data['username'],
+            password=validated_data['password'],
+            email=validated_data['email']
+        )
+        return user
+
+from django.urls import path
+"""
+    Define URL patterns for registering, logging in, and logging out users using Django views.
+    Import necessary views and classes from Django and Django REST framework.
+    @param path - URL pattern
+    @return List of URL patterns
+    """
+
+from .views import RegisterView, LoginView, LogoutView, CustomTokenObtainPairView
+
+from django.urls import path
+from rest_framework_simplejwt.views import (
+    TokenObtainPairView,
+    TokenRefreshView,
+)
+
+urlpatterns = [
+    path('register/', RegisterView.as_view(), name='register'),
+    path('login/', LoginView.as_view(), name='login'),
+    path('logout/', LogoutView.as_view(), name='logout'),
+
+
+    path('token/', CustomTokenObtainPairView.as_view(), name='token_obtain_pair'),
+    path('token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
+    # Your other paths...
+]
+
+from rest_framework import generics, permissions
+"""
+    This code snippet defines views for user registration, login, and logout using Django Rest Framework.
+    - `RegisterView`: Allows users to register by creating a new user object.
+    - `LoginView`: Allows users to log in and obtain an authentication token.
+    - `LogoutView`: Allows users to log out by deleting the authentication token.
+    """
+from rest_framework.response import Response
+from rest_framework.authtoken.models import Token
+from django.contrib.auth.models import User
+from .serializers import UserSerializer, RegisterSerializer
+from rest_framework.authtoken.views import ObtainAuthToken
+from rest_framework.settings import api_settings
+
+class RegisterView(generics.CreateAPIView):
+    queryset = User.objects.all()
+    permission_classes = (permissions.AllowAny,)
+    serializer_class = RegisterSerializer
+
+class LoginView(ObtainAuthToken):
+    renderer_classes = api_settings.DEFAULT_RENDERER_CLASSES
+
+    def post(self, request, *args, **kwargs):
+        response = super(LoginView, self).post(request, *args, **kwargs)
+        token = Token.objects.get(key=response.data['token'])
+        return Response({'token': token.key, 'user_id': token.user_id, 'username': token.user.username})
+
+class LogoutView(generics.GenericAPIView):
+    renderer_classes = api_settings.DEFAULT_RENDERER_CLASSES
+
+    def post(self, request, *args, **kwargs):
+        request.auth.delete()
+        return Response(status=204)
+
+
+
+from django.shortcuts import render
+from rest_framework_simplejwt.views import TokenObtainPairView
+from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
+from rest_framework_simplejwt.tokens import RefreshToken
+from django.contrib.auth.models import update_last_login
+from django.contrib.auth.signals import user_logged_in
+
+from django.conf import settings as api_settings
+# Create your views here.
+
+class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
+    @classmethod
+    def get_token(cls, user):
+        return RefreshToken.for_user(user)
+
+    def validate(self, attrs):
+        data = super().validate(attrs)
+
+        refresh = self.get_token(self.user)
+
+        data['refresh'] = str(refresh)
+        data['access'] = str(refresh.access_token)
+
+        
+        # SIGNAL ADDED HERE
+        user_logged_in.send(sender=self.user.__class__, request=self.context['request'], user=self.user)
+
+
+        return data
+
+class CustomTokenObtainPairView(TokenObtainPairView):
+    """
+    Takes a set of user credentials and returns an access and refresh JSON web
+    token pair to prove the authentication of those credentials.
+    """
+    serializer_class = CustomTokenObtainPairSerializer
+
+from django.apps import AppConfig
+
+class CoreConfig(AppConfig):
+    default_auto_field = 'django.db.models.BigAutoField'
+    name = 'core'
+<!DOCTYPE html>
+<html>
+<head>
+    <title>API</title>
+</head>
+<body>
+    <h1>API</h1>
+</body>
+</html>
+
+
+INSTALLED_APPS = [
+    'moment',
+    'core',
+    'corsheaders',
+    'django.contrib.admin',
+    'django.contrib.auth',
+    'django.contrib.contenttypes',
+    'django.contrib.sessions',
+    'django.contrib.messages',
+    'django.contrib.staticfiles',
+    'rest_framework',
+    'rest_framework_simplejwt',
+    'rest_framework.authtoken',
+]
+MIDDLEWARE = [
+    'django.middleware.security.SecurityMiddleware',
+    'django.contrib.sessions.middleware.SessionMiddleware',
+    'corsheaders.middleware.CorsMiddleware',
+    'django.middleware.common.CommonMiddleware',
+    'django.middleware.csrf.CsrfViewMiddleware',
+    'django.contrib.auth.middleware.AuthenticationMiddleware',
+    'django.contrib.messages.middleware.MessageMiddleware',
+    'django.middleware.clickjacking.XFrameOptionsMiddleware',
+]
+SIMPLE_JWT = {
+    'ACCESS_TOKEN_LIFETIME': timedelta(days=1),
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=2),
+    'ROTATE_REFRESH_TOKENS': False,
+    'BLACKLIST_AFTER_ROTATION': True,
+    'ALGORITHM': 'HS256',
+    'SIGNING_KEY': SECRET_KEY,
+    'VERIFYING_KEY': None,
+    'AUDIENCE': None,
+    'ISSUER': None,
+    'AUTH_HEADER_TYPES': ('Bearer',),
+    'AUTH_HEADER_NAME': 'HTTP_AUTHORIZATION',
+    'USER_ID_FIELD': 'id',
+    'USER_ID_CLAIM': 'user_id',
+    'USER_AUTHENTICATION_RULE': 'rest_framework_simplejwt.authentication.default_user_authentication_rule',
+    'AUTH_TOKEN_CLASSES': ('rest_framework_simplejwt.tokens.AccessToken',),
+    'TOKEN_TYPE_CLAIM': 'token_type',
+    'JTI_CLAIM': 'jti',
+    'SLIDING_TOKEN_REFRESH_EXP_CLAIM': 'refresh_exp',
+    'SLIDING_TOKEN_LIFETIME': timedelta(minutes=5),
+    'SLIDING_TOKEN_REFRESH_LIFETIME': timedelta(days=1),
+}
+
+
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': (
+        'rest_framework_simplejwt.authentication.JWTAuthentication',
+    ),
+    'DEFAULT_PERMISSION_CLASSES': (
+        'rest_framework.permissions.IsAuthenticated',
+    ),
+}
+
+WSGI_APPLICATION = 'happy_app.wsgi.application'
+
+
+"""
+URL configuration for happy_app project.
+
+The `urlpatterns` list routes URLs to views. For more information please see:
+    https://docs.djangoproject.com/en/4.2/topics/http/urls/
+Examples:
+Function views
+    1. Add an import:  from my_app import views
+    2. Add a URL to urlpatterns:  path('', views.home, name='home')
+Class-based views
+    1. Add an import:  from other_app.views import Home
+    2. Add a URL to urlpatterns:  path('', Home.as_view(), name='home')
+Including another URLconf
+    1. Import the include() function: from django.urls import include, path
+    2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
+"""
+from django.contrib import admin
+from django.urls import path, include
+
+from django.conf import settings
+from django.conf.urls.static import static
+
+urlpatterns = [
+    path('admin/', admin.site.urls),
+    path('api/', include('core.users.urls')),
+    path('api/', include('moment.urls')),
+]+ static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+
+
+
+from django.contrib import admin
+from .models import *
+
+# Register your models here.
+admin.site.register(Moment)
+admin.site.register(Article)
+admin.site.register(Feedback)
+admin.site.register(UserProfile)
+
+from django.apps import AppConfig
+
+
+class MomentConfig(AppConfig):
+    default_auto_field = 'django.db.models.BigAutoField'
+    name = 'moment'
+    def ready(self):
+        import moment.signals
+
+from django.db import models
+from django.conf import settings
+from django.contrib.auth.models import User
+from datetime import date, timedelta
+
+"""
+    This code defines three Django models: UserProfile, Moment, Article, and Image.
+    """
+# Create your models here.
+class Moment(models.Model):
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    title = models.CharField(max_length=200)
+    location = models.CharField(max_length=300,null=True, blank=True)
+    date = models.DateField()
+    short_description = models.TextField()
+    content = models.TextField()
+    photos = models.FileField(upload_to='photos/', null=True, blank=True)
+    videos = models.FileField(upload_to='videos/', null=True, blank=True)
+    spotify_track_id = models.CharField(max_length=50, null=True, blank=True)
+
+    def __str__(self):
+        return self.title
+    
+
+
+class Article(models.Model):
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    title = models.CharField(max_length=200)
+    date = models.DateField()
+    content = models.TextField()
+   
+    def __str__(self):
+        return self.title
+
+
+
+class Image(models.Model):
+    image = models.ImageField(upload_to='photos/')
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+
+
+
+
+
+class Feedback(models.Model):
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, unique=True)
+    rating = models.IntegerField(null=True)
+    content = models.TextField(null=True)
+
+    def __str__(self):
+        return f"{self.user.username} - {self.rating}"
+    
+
+
+
+class UserProfile(models.Model):
+    user = models.OneToOneField(User, on_delete=models.CASCADE)
+    streak_count = models.IntegerField(default=0)
+    last_login_date = models.DateField(null=True, blank=True)
+
+    def update_streak(self):
+        today = date.today()
+        if self.last_login_date == today - timedelta(days=1):
+            self.streak_count += 1
+        elif self.last_login_date != today:
+            self.streak_count = 1
+        self.last_login_date = today
+        self.save()
+rom rest_framework import serializers
+"""
+    Define serializers for Moment, Article, and Image models to convert complex data types to native Python data types that can then be easily rendered into JSON, XML, or other content types.
+    - JSON is an open data interchange format that is readable by both people and machines. 
+    - JSON is independent of any programming language and is a common API output in a wide variety of applications. XML is a markup language that provides rules to define any data.
+    - MomentSerializer: Serializes Moment model fields including id, user, title, location, date, short_description, content, photos, videos, and spotify_track_id. 'user' field is read-only.
+    - ArticleSerializer: Serializes Article model fields including id, user, title, content, and date. 'user' field is read-only.
+    - ImageSerializer: Serializes Image model fields including id, image, and uploaded_at.
+    """
+from .models import Moment, Article, Image, Feedback, UserProfile
+
+
+class MomentSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Moment
+        fields = ['id', 'user', 'title', 'location', 'date', 'short_description', 'content', 'photos', 'videos', 'spotify_track_id']
+        read_only_fields = ['user']
+
+
+class ArticleSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Article
+        fields = ['id', 'user', 'title', 'content', 'date']
+        read_only_fields = ['user']
+
+
+class ImageSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Image
+        fields = ('id', 'image', 'uploaded_at')
+
+
+
+class FeedbackSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Feedback
+        fields = ['rating', 'content']  # Exclude 'user' from the fields
+
+    def create(self, validated_data):
+        user = self.context['request'].user
+        feedback, created = Feedback.objects.update_or_create(
+            user=user,
+            defaults=validated_data
+        )
+        return feedback
+
+    def update(self, instance, validated_data):
+        instance.rating = validated_data.get('rating', instance.rating)
+        instance.content = validated_data.get('content', instance.content)
+        instance.save()
+        return instance
+
+
+
+class UserProfileSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = UserProfile
+        fields = ['user', 'streak_count', 'last_login_date']
+from django.db.models.signals import post_save
+from django.dispatch import receiver
+from django.contrib.auth.models import User
+from .models import UserProfile
+
+from django.contrib.auth.signals import user_logged_in
+
+
+@receiver(post_save, sender=User)
+def create_user_profile(sender, instance, created, **kwargs):
+    if created:
+        UserProfile.objects.create(user=instance)
+
+@receiver(post_save, sender=User)
+def save_user_profile(sender, instance, **kwargs):
+    instance.userprofile.save()
+
+@receiver(user_logged_in)
+def update_streak_on_login(sender, user, request, **kwargs):
+    user_profile = UserProfile.objects.get(user=user)
+    user_profile.update_streak()
+
+from django.urls import path
+"""
+    Define the URL patterns for the Django application.
+    - Import necessary modules and classes.
+    - Define URL patterns for MomentListCreate, MomentDetail, ImageUploadView, and ArticleListCreate views.
+    - Map URLs to corresponding view classes.
+    - Include names for each URL pattern for easy reference.
+    """
+from .views import MomentListCreate, MomentDetail, UserProfileView, ImageUploadView, ArticleListCreate, FeedbackRetrieveUpdateCreateView
+from django.conf import settings
+from django.conf.urls.static import static
+
+urlpatterns = [
+    path('moments/', MomentListCreate.as_view(), name='moment-list-create'),
+    path('feedback/', FeedbackRetrieveUpdateCreateView.as_view(), name='feedback-retrieve-update-create'),    
+    path('moments/<int:pk>/', MomentDetail.as_view(), name='moment-detail'),
+    path('articles/', ArticleListCreate.as_view(), name='article-list-create'),
+    path('upload/', ImageUploadView.as_view(), name='image-upload'),
+    path('user-profile/', UserProfileView.as_view(), name='user-profile'),
+]
+from rest_framework import generics,permissions
+
+from .models import Moment, Article, Feedback
+from .serializers import MomentSerializer, ImageSerializer, ArticleSerializer, FeedbackSerializer
+from rest_framework import status
+from rest_framework.response import Response
+from rest_framework.views import APIView
+from .models import Image
+from .models import UserProfile
+from .serializers import UserProfileSerializer
+from django.contrib.auth.models import User
+from rest_framework.permissions import IsAuthenticated
+
+"""
+    This code snippet defines several API views for handling Moments, Articles, and Image uploads using Django Rest Framework.
+    - `MomentListCreate`: Handles listing and creating Moments. It filters Moments by the requesting user and saves the user when creating a new Moment.
+    - `MomentDetail`: Handles retrieving, updating, and deleting a specific Moment for the requesting user.
+    - `ArticleListCreate`: Handles listing and creating Articles. It retrieves all Articles and saves the user when creating a new Article.
+    - `ArticleDetail`: Handles retrieving, updating, and deleting a specific Article for the requesting user.
+    - `ImageUploadView`: Handles uploading Images. It validates the Image data, saves the Image if valid, and returns appropriate responses based on the validation result.
+    - Each
+    """
+class MomentListCreate(generics.ListCreateAPIView):
+    serializer_class = MomentSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        return Moment.objects.filter(user=self.request.user)
+
+    def perform_create(self, serializer):
+        serializer.save(user=self.request.user)
+
+class MomentDetail(generics.RetrieveUpdateDestroyAPIView):
+    serializer_class = MomentSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        return Moment.objects.filter(user=self.request.user)
+    
+
+
+class ArticleListCreate(generics.ListCreateAPIView):
+    serializer_class = ArticleSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        return Article.objects.all()
+
+    def perform_create(self, serializer):
+        serializer.save(user=self.request.user)
+
+class ArticleDetail(generics.RetrieveUpdateDestroyAPIView):
+    serializer_class = ArticleSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        return Article.objects.filter(user=self.request.user)
+
+class ImageUploadView(APIView):
+    def post(self, request, *args, **kwargs):
+        serializer = ImageSerializer(data=request.data)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        else:
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class FeedbackRetrieveUpdateCreateView(generics.RetrieveUpdateAPIView):
+    queryset = Feedback.objects.all()
+    serializer_class = FeedbackSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_object(self):
+        feedback, created = Feedback.objects.get_or_create(user=self.request.user)
+        return feedback
+
+    def perform_create(self, serializer):
+        serializer.save(user=self.request.user)
+
+    def post(self, request, *args, **kwargs):
+        feedback, created = Feedback.objects.get_or_create(user=request.user)
+        serializer = self.get_serializer(feedback, data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save(user=request.user)
+        if created:
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        else:
+            return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class UserProfileView(generics.RetrieveAPIView):
+    serializer_class = UserProfileSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_object(self):
+        user = self.request.user
+        user_profile, created = UserProfile.objects.get_or_create(user=user)
+        return user_profile
+
+@echo off
+
+rem This file is UTF-8 encoded, so we need to update the current code page while executing it
+for /f "tokens=2 delims=:." %%a in ('"%SystemRoot%\System32\chcp.com"') do (
+    set _OLD_CODEPAGE=%%a
+)
+if defined _OLD_CODEPAGE (
+    "%SystemRoot%\System32\chcp.com" 65001 > nul
+)
+
+set VIRTUAL_ENV=C:\Users\dell\Desktop\happy app\.env
+
+if not defined PROMPT set PROMPT=$P$G
+
+if defined _OLD_VIRTUAL_PROMPT set PROMPT=%_OLD_VIRTUAL_PROMPT%
+if defined _OLD_VIRTUAL_PYTHONHOME set PYTHONHOME=%_OLD_VIRTUAL_PYTHONHOME%
+
+set _OLD_VIRTUAL_PROMPT=%PROMPT%
+set PROMPT=(.env) %PROMPT%
+
+if defined PYTHONHOME set _OLD_VIRTUAL_PYTHONHOME=%PYTHONHOME%
+set PYTHONHOME=
+
+if defined _OLD_VIRTUAL_PATH set PATH=%_OLD_VIRTUAL_PATH%
+if not defined _OLD_VIRTUAL_PATH set _OLD_VIRTUAL_PATH=%PATH%
+
+set PATH=%VIRTUAL_ENV%\Scripts;%PATH%
+
+:END
+if defined _OLD_CODEPAGE (
+    "%SystemRoot%\System32\chcp.com" %_OLD_CODEPAGE% > nul
+    set _OLD_CODEPAGE=
+)
+@echo off
+
+if defined _OLD_VIRTUAL_PROMPT (
+    set "PROMPT=%_OLD_VIRTUAL_PROMPT%"
+)
+set _OLD_VIRTUAL_PROMPT=
+
+if defined _OLD_VIRTUAL_PYTHONHOME (
+    set "PYTHONHOME=%_OLD_VIRTUAL_PYTHONHOME%"
+    set _OLD_VIRTUAL_PYTHONHOME=
+)
+
+if defined _OLD_VIRTUAL_PATH (
+    set "PATH=%_OLD_VIRTUAL_PATH%"
+)
+
+set _OLD_VIRTUAL_PATH=
+
+set VIRTUAL_ENV=
+
+:END
+
+front end code: 
+/**
+ * Functional component that displays a list of articles and allows the user to add new articles.
+ * @returns JSX.Element
+ */
+import React, { useState, FormEvent, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { getArticles } from '../services/apis';
+import { XMarkIcon } from '@heroicons/react/20/solid';
+
+interface ArticlesProps {
+
+}
+
+const Articles: React.FC<ArticlesProps> = () => {
+  // manage the list of articles
+    const [articles,setArticles]=useState<any[]>([]);
+    // to handel the selected article
+    const [selectedArticle, setSelectedArticle] = useState<any>(null);
+    // hooks that allow us to navigate to other routes
+    const navigate = useNavigate();
+
+    // function to handle navigation to the page of creating new article
+    const addNewArticle=()=>{
+      navigate('/createArticle');
+    }
+
+    // hook react allowing init if the component with the necessary data
+    useEffect(()=>{
+        getArticles().then(
+            (response:any)=>{
+                setArticles(response.data);
+            },
+            (error:any)=>{
+                console.log("something went wrong");
+            }
+        );
+      },[])
+    return(
+        <>
+      
+
+      <div className="p-4 space-y-4">
+      {articles.map(article => (
+          <div
+          className="bg-white border border-gray-200 rounded-lg shadow-md p-4 cursor-pointer hover:bg-gray-100"
+          onClick={() => setSelectedArticle(article)}
+        >
+          <h3 className="text-xl font-bold">{article.title}</h3>
+          <p className="text-gray-700">{article.date}</p>
+        </div>
+      ))}
+      {selectedArticle && (
+         <div className="fixed inset-0 flex items-center justify-center z-50">
+         <div className="fixed inset-0 bg-gray-600 bg-opacity-75" onClick={() => setSelectedArticle(null)}></div>
+         <div className="bg-white rounded-lg shadow-lg max-w-3xl w-full max-h-full overflow-y-auto p-6 z-10">
+            
+            
+          <button onClick={() => setSelectedArticle(null)} className="bg-[#21552A] hover:bg-[#1E4A24] text-red-500"><XMarkIcon/></button>
+          <h2 className="text-2xl font-bold">{selectedArticle.title}</h2>
+          <div dangerouslySetInnerHTML={{ __html: selectedArticle.content }} className="mb-4"></div>
+
+        </div>
+      </div>
+        
+      )}
+    </div>
+        
+
+        
+    <div className="fixed bottom-4 right-4">
+    <button onClick={addNewArticle} className="bg-[#21552A] hover:bg-[#1E4A24] text-white font-bold py-2 px-4 rounded-full shadow-lg">
+    Add Article
+  </button>
+</div>
+        </>
+    )
+}
+
+
+export default Articles;
+
+import React, { useEffect, useState } from 'react';
+import StarRatings from 'react-star-ratings';
+import { addFeedback, getFeedback } from '../services/apis';
+
+interface FeedbackProps {
+  rating: number;
+  content: string;
+}
+
+const FeedbackForm: React.FC = () => {
+  const [rating, setRating] = useState<number>(0);
+  const [content, setContent] = useState<string>('');
+  const [feedback, setFeedback] = useState<FeedbackProps | null>(null);
+
+  useEffect(()=>{
+    getFeedback().then((response:any)=>{
+      if(response.data.rating){
+      setFeedback(response.data)
+      }
+    })
+  },[])
+  
+  const handleSubmit = (event: React.FormEvent) => {
+    event.preventDefault();
+    const newFeedbackProps: FeedbackProps = {
+      rating,
+      content,
+    };
+    addFeedback(newFeedbackProps).then((result:any)=>{
+      setFeedback(newFeedbackProps);
+      setRating(0);
+      setContent('');
+    },
+  (error:any)=>{
+    alert("something went wrong");
+  })
+   
+  };
+
+  return (
+    <div className="max-w-md mx-auto mt-10 p-4 border rounded-lg shadow-lg">
+      <h2 className="text-2xl font-bold mb-4">Feedback Form</h2>
+      <form onSubmit={handleSubmit}>
+        <div className="mb-4">
+          <label className="block text-sm font-medium text-gray-700">Rating</label>
+          <StarRatings
+            rating={rating}
+            starRatedColor="gold"
+            changeRating={(newRating) => setRating(newRating)}
+            numberOfStars={5}
+            name="rating"
+            starDimension="30px"
+            starSpacing="5px"
+          />
+        </div>
+        <div className="mb-4">
+          <label className="block text-sm font-medium text-gray-700">Comment</label>
+          <textarea
+            className="mt-1 p-2 w-full border rounded-md shadow-sm focus:ring focus:ring-opacity-50 focus:ring-blue-300"
+            rows={5}
+            value={content}
+            onChange={(e) => setContent(e.target.value)}
+            required
+          ></textarea>
+        </div>
+        <button
+          type="submit"
+          className="w-full py-2 px-4 bg-[#21552A] hover:bg-[#1E4A24] text-white font-semibold rounded-md shadow hover:bg-blue-700"
+        disabled={!(rating && content)}
+        >
+          Submit Feedback
+        </button>
+      </form>
+      {feedback && (
+        <div className="mt-6 p-4 border rounded-md bg-gray-50">
+          <h3 className="text-lg font-semibold">Submitted Feedback</h3>
+          <p><strong>Rating:</strong> {feedback.rating} / 5</p>
+          <p><strong>Comment:</strong> {feedback.content}</p>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default FeedbackForm;
+/**
+ * Functional component representing the Home page of the application.
+ * This component displays a vertical timeline of memories and allows users to interact with them.
+ * @returns JSX.Element
+ */
+import { FaceSmileIcon } from '@heroicons/react/20/solid';
+import React, { useState, FormEvent, useEffect, useRef, RefObject } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { VerticalTimeline, VerticalTimelineElement } from 'react-vertical-timeline-component';
+import { getMoment, getUserProfile } from '../services/apis';
+import IndicatorComponent from '../components/indicator/IndicatorComponent';
+import SpotifyPlayer from '../components/spotify/SpotifyPlayer';
+
+
+interface HomeProps {
+
+}
+
+const Home: React.FC<HomeProps> = () => {
+  const [moment,setMoment] = useState<any[]>([]);
+
+  const handleSubmit = (e: FormEvent) => {
+    e.preventDefault();
+  };
+
+  useEffect(()=>{
+    getMoment().then(
+        (response:any)=>{
+            setMoment(response.data);
+        },
+        (error:any)=>{
+            console.log("something went wrong");
+        }
+    );
+  },[])
+
+  useEffect(()=>{
+    if(moment.length!==0){
+    highlightRandomItem()
+    }
+
+  },[moment])
+
+  const [highlightedIndex, setHighlightedIndex] = useState<number | null>(null);
+  const [notification, setNotification] = useState<string | null>(null);
+  const [position, setPosition] = useState<{ top: number; left: number } | null>(null);
+
+  const highlightRandomItem = () => {
+    const randomIndex = Math.floor(Math.random() * moment.length);
+    setHighlightedIndex(randomIndex);
+    setNotification(`Check out: ${moment[randomIndex]}`);
+
+    // Find the position of the selected element
+    const selectedItem = document.querySelector(`[data-index="${randomIndex}"]`);
+    if (selectedItem) {
+      const rect = selectedItem.getBoundingClientRect();
+      setPosition({ top: rect.top + window.scrollY, left: rect.left + window.scrollX });
+    }
+
+    setTimeout(() => setNotification(null), 3000); // Hide notification after 3 seconds
+  };
+
+  const generateWhatsAppShareURL = (data: any): string => {
+    const message = encodeURIComponent(`
+      Title: ${data.title}
+      Location: ${data.location}
+      Date: ${data.date}
+      Description: ${data.short_description}
+      Content: ${data.content}
+      Photos: ${data.photos}
+      Videos: ${data.videos}
+    `);
+  
+    return `https://api.whatsapp.com/send?text=${message}`;
+  };
+
+  const navigate = useNavigate();
+  const addNewMoment=()=>{
+    navigate('/createMoment');
+  }
+  const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [showMoment,setShowMoment] = useState<any>(null);
+  const openDialog = (memory:any) => {
+    setShowMoment(memory)
+    setIsDialogOpen(true);
+  };
+  const closeDialog = () => setIsDialogOpen(false);
+
+
+  const special :RefObject<HTMLDivElement>= useRef(null);
+
+
+  
+
+  return (
+        <div className="bg-gray-100">
+    
+
+    <VerticalTimeline>
+      {moment.map((memory, index) => (
+        <VerticalTimelineElement
+          key={index}
+          className={"vertical-timeline-element--work "+(highlightedIndex===index ? "target" : "") }
+          contentStyle={{
+            background: '#FFBFCA',
+            color: '#804650'
+          }}
+          style={{color:"red"}}
+          contentArrowStyle={{ borderRight: '7px solid #FFBFCA' }}
+          date={memory.date}
+          iconStyle={{ background: '#21552A', color: '#BFFFCB' }}
+          icon={<FaceSmileIcon />}
+          onTimelineElementClick={()=>openDialog(memory)}
+        >
+              {/* <div ref={highlightedIndex===index ? special : undefined}> */}
+
+            <h3 className="vertical-timeline-element-title"
+                        ref={highlightedIndex===index ? special : undefined}
+      
+
+          >{memory.title}</h3>
+          <h4 className="vertical-timeline-element-subtitle">{memory.location}</h4>
+          <p>{memory.short_description}</p>
+          {/* </div> */}
+        </VerticalTimelineElement>
+      ))}
+    </VerticalTimeline>
+   {highlightedIndex!=null && <IndicatorComponent  />}
+
+    <div className="fixed bottom-4 right-4">
+    <button  onClick={addNewMoment} className="bg-[#21552A] hover:bg-[#1E4A24] text-white font-bold py-2 px-4 rounded-full shadow-lg">
+    
+    Add a new moment
+  </button>
+</div>
+
+{isDialogOpen && showMoment && (
+        <div className="fixed inset-0 flex items-center justify-center z-50">
+          <div className="fixed inset-0 bg-gray-600 bg-opacity-75" onClick={closeDialog}></div>
+          <div className="bg-white rounded-lg shadow-lg max-w-3xl w-full max-h-full overflow-y-auto p-6 z-10">
+          {showMoment.spotify_track_id && <SpotifyPlayer trackId={showMoment.spotify_track_id} />}
+            <h2 className="text-2xl mb-4">{showMoment.title}</h2>
+            <p className="mb-4">{showMoment.short_description}</p>
+            <div dangerouslySetInnerHTML={{ __html: showMoment.content }} className="mb-4"></div>
+            {showMoment.photos && (
+              <img src={showMoment.photos} alt={showMoment.title} className="m-10"/>
+            )}
+            {showMoment.videos && (
+              <video controls className="mb-4 w-full">
+                <source src={showMoment.videos} type="video/mp4" />
+                Your browser does not support the video tag.
+              </video>
+            )}
+            <button
+              className="px-4 py-2 bg-[#21552A] hover:bg-[#1E4A24] text-white rounded hover:bg-blue-700"
+              onClick={closeDialog}
+            >
+              Close
+            </button>
+          
+            
+    <a href={generateWhatsAppShareURL(showMoment)} target="_blank" rel="noopener noreferrer">
+
+        <img src='https://static.whatsapp.net/rsrc.php/v3/yc/r/hUUuVTz6ZVi.png' style={{float:'right',height:'56px'}}/>
+
+    </a>
+          </div>
+  
+              </div>
+      )}
+
+
+  </div>
+  );
+};
+
+export default Home;
+
+/**
+ * A functional component that represents a login form.
+ * @param {LoginProps} setIsAuthenticated - A function to set the authentication status.
+ * @returns JSX element representing the login form.
+ */
+import React, { useState, FormEvent } from 'react';
+import axios, { AxiosResponse } from 'axios';
+import { login } from '../services/apis';
+
+interface LoginProps {
+  setIsAuthenticated: (auth: boolean) => void;
+}
+
+const Login: React.FC<LoginProps> = ({ setIsAuthenticated }) => {
+  const [username, setEmail] = useState<string>('');
+  const [password, setPassword] = useState<string>('');
+  const [error, setError] = useState<string>('');
+
+  const handleSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    setError('');
+    const data = {username,password}
+    login(data).then((response:AxiosResponse)=>{
+
+      if (response.status.valueOf()===200) {
+          localStorage.setItem('token', response.data.access);
+          // localStorage.setItem('user_id', response.data.id);
+        setIsAuthenticated(true);
+      } else {
+        setError(response.data.message || 'Login failed');
+      }    },
+  (error:any)=>{
+    setError(error.response?.data?.message || 'Something went wrong');
+
+  })
+
+  };
+
+  return (
+    <div className="flex justify-center items-center mt-20 ">
+      <form className="bg-white p-6 rounded shadow-md w-1/3" onSubmit={handleSubmit}>
+        <h2 className="text-2xl mb-4">Login</h2>
+        {error && <div className="mb-4 text-red-500">{error}</div>}
+        <div className="mb-4">
+          <label className="block text-sm font-bold mb-2" htmlFor="username">
+            Username
+          </label>
+          <input
+            className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700"
+            id="username"
+            type="username"
+            value={username}
+            required
+            onChange={(e) => setEmail(e.target.value)}
+          />
+        </div>
+        <div className="mb-4">
+          <label className="block text-sm font-bold mb-2" htmlFor="password">
+            Password
+          </label>
+          <input
+            className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700"
+            id="password"
+            type="password"
+            value={password}
+            required
+            onChange={(e) => setPassword(e.target.value)}
+          />
+        </div>
+        <button
+          className="bg-[#21552A] hover:bg-[#1E4A24] text-white font-bold py-2 px-4 rounded"
+          type="submit"
+        >
+          Login
+        </button>
+      </form>
+    </div>
+  );
+};
+
+export default Login;
+/**
+ * A functional component that represents a login form.
+ * @param {LoginProps} setIsAuthenticated - A function to set the authentication status.
+ * @returns JSX element representing the login form.
+ */
+import React, { useState, FormEvent } from 'react';
+import axios, { AxiosResponse } from 'axios';
+import { login } from '../services/apis';
+
+interface LoginProps {
+  setIsAuthenticated: (auth: boolean) => void;
+}
+
+const Login: React.FC<LoginProps> = ({ setIsAuthenticated }) => {
+  const [username, setEmail] = useState<string>('');
+  const [password, setPassword] = useState<string>('');
+  const [error, setError] = useState<string>('');
+
+  const handleSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    setError('');
+    const data = {username,password}
+    login(data).then((response:AxiosResponse)=>{
+
+      if (response.status.valueOf()===200) {
+          localStorage.setItem('token', response.data.access);
+          // localStorage.setItem('user_id', response.data.id);
+        setIsAuthenticated(true);
+      } else {
+        setError(response.data.message || 'Login failed');
+      }    },
+  (error:any)=>{
+    setError(error.response?.data?.message || 'Something went wrong');
+
+  })
+
+  };
+
+  return (
+    <div className="flex justify-center items-center mt-20 ">
+      <form className="bg-white p-6 rounded shadow-md w-1/3" onSubmit={handleSubmit}>
+        <h2 className="text-2xl mb-4">Login</h2>
+        {error && <div className="mb-4 text-red-500">{error}</div>}
+        <div className="mb-4">
+          <label className="block text-sm font-bold mb-2" htmlFor="username">
+            Username
+          </label>
+          <input
+            className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700"
+            id="username"
+            type="username"
+            value={username}
+            required
+            onChange={(e) => setEmail(e.target.value)}
+          />
+        </div>
+        <div className="mb-4">
+          <label className="block text-sm font-bold mb-2" htmlFor="password">
+            Password
+          </label>
+          <input
+            className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700"
+            id="password"
+            type="password"
+            value={password}
+            required
+            onChange={(e) => setPassword(e.target.value)}
+          />
+        </div>
+        <button
+          className="bg-[#21552A] hover:bg-[#1E4A24] text-white font-bold py-2 px-4 rounded"
+          type="submit"
+        >
+          Login
+        </button>
+      </form>
+    </div>
+  );
+};
+
+export default Login;
+
+/**
+ * A React functional component that provides a logout button.
+ * @param {LogoutProps} setIsAuthenticated - Function to set the authentication status.
+ * @returns JSX element containing a logout button.
+ */
+
+import React from 'react';
+
+interface LogoutProps {
+  setIsAuthenticated: (auth: boolean) => void;
+}
+
+const Logout: React.FC<LogoutProps> = ({ setIsAuthenticated }) => {
+  const handleLogout = () => {
+    // Here, you would usually make an API call to log out the user.
+    // For this example, we'll just assume logout is successful.
+    setIsAuthenticated(false);
+  };
+
+  return (
+    <div className="flex justify-center items-center h-screen">
+      <button
+        className="bg-[#804650] hover:bg-red-700 text-white font-bold py-2 px-4 rounded"
+        onClick={handleLogout}
+      >
+        Logout
+      </button>
+    </div>
+  );
+};
+
+export default Logout;
+
+/**
+ * Component for creating a new article with a form to input date, title, and content.
+ * @returns JSX element containing the form for creating a new article.
+ */
+// src/ArticleForm.tsx
+import React, { useState, ChangeEvent, FormEvent } from 'react';
+import { addArticle } from '../services/apis';
+import TextEditor from '../components/TextEditor/TextEditor';
+import { useNavigate, useNavigation } from 'react-router-dom';
+
+interface Article {
+    date: string;
+    title: string;
+    content: string;
+}
+
+const NewArticle: React.FC = () => {
+    const [formData, setFormData] = useState<Article>({
+        date: '',
+        title: '',
+        content: '',
+    });
+
+    const navigate = useNavigate();
+
+    const handleChange = (e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+        const { name, value, files } = e.target as HTMLInputElement;
+        if (files) {
+            setFormData({
+                ...formData,
+                [name]: files[0],
+            });
+        } else {
+            setFormData({
+                ...formData,
+                [name]: value,
+            });
+        }
+    };
+
+
+
+    
+    const handleSubmit = (e: FormEvent) => {
+        e.preventDefault();
+        
+        addArticle(formData).then((response:any)=>{
+            navigate('/articles')
+        },(error:any)=>{
+            alert('failed')
+        })
+        console.log(formData);
+    };
+
+    const setContent =(s:string)=>{
+        setFormData({
+            ...formData,
+            content:s,
+        });
+    }
+
+    return (
+        <form onSubmit={handleSubmit} className="max-w-lg mx-auto p-4 bg-white shadow-md rounded">
+            <div className="mb-4">
+                <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="date">
+                    Date <span className="text-red-500 ml-1">*</span>
+                </label>
+                <input
+                    type="date"
+                    id="date"
+                    name="date"
+                    required
+                    value={formData.date}
+                    onChange={handleChange}
+                    className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+                />
+            </div>
+            
+            <div className="mb-4">
+                <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="title">
+                    Title <span className="text-red-500 ml-1">*</span>
+                </label>
+                <input
+                    type="text"
+                    id="title"
+                    name="title"
+                    required
+                    value={formData.title}
+                    onChange={handleChange}
+                    className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+                />
+            </div>
+           
+            <div className="mb-4">
+                <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="content">
+                    Content  <span className="text-red-500 ml-1">*</span>
+                </label>
+          <TextEditor value={formData.content} setValue={setContent}/>
+
+            </div>
+           
+            <div className="flex items-center justify-between">
+                <button
+                    type="submit"
+                    className="bg-[#21552A] hover:bg-[#1E4A24] text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline"
+                >
+                    Submit
+                </button>
+            </div>
+        </form>
+    );
+};
+
+export default NewArticle;
+
+/**
+ * Component for creating a new moment with date, location, title, description, content, photos, videos, and a Spotify track.
+ * @returns JSX element for the form to create a new moment.
+ */
+// src/MomentForm.tsx
+import React, { useState, ChangeEvent, FormEvent } from 'react';
+import { addMoment } from '../services/apis';
+import TextEditor from '../components/TextEditor/TextEditor';
+import { useNavigate, useNavigation } from 'react-router-dom';
+import SpotifySearch from '../components/spotify/SpotifySearch';
+
+interface Moment {
+    date: string;
+    title: string;
+    location: string;
+    shortDescription: string;
+    content: string;
+    photos: File | null;
+    videos: File | null;
+}
+
+const NewMoment: React.FC = () => {
+    const [formData, setFormData] = useState<Moment>({
+        date: '',
+        location: '',
+        title: '',
+        shortDescription: '',
+        content: '',
+        photos: null,
+        videos: null,
+    });
+
+    const navigate = useNavigate();
+
+    const handleChange = (e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+        const { name, value, files } = e.target as HTMLInputElement;
+        if (files) {
+            setFormData({
+                ...formData,
+                [name]: files[0],
+            });
+        } else {
+            setFormData({
+                ...formData,
+                [name]: value,
+            });
+        }
+    };
+
+
+
+    
+    const handleSubmit = (e: FormEvent) => {
+        e.preventDefault();
+        let data =new FormData();
+        data.append('date',formData.date)
+        data.append('location',formData.location)
+        data.append('title',formData.title)
+        data.append('short_description',formData.shortDescription)
+        data.append('content',formData.content)
+        data.append('photos',formData.photos ?? "")
+        data.append('videos',formData.videos ?? "")
+        data.append('spotify_track_id',spotifyTrackId)
+        addMoment(data).then((response:any)=>{
+            navigate('/')
+        },(error:any)=>{
+            alert('failed')
+        })
+        console.log(formData);
+    };
+
+    const setContent =(s:string)=>{
+        setFormData({
+            ...formData,
+            content:s,
+        });
+    }
+
+    const [spotifyTrackId, setSpotifyTrackId] = useState<string>('');
+
+
+    return (
+        <form onSubmit={handleSubmit} className="max-w-lg mx-auto p-4 bg-white shadow-md rounded">
+            <div className="mb-4">
+                <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="date">
+                    Date <span className="text-red-500 ml-1">*</span>
+                </label>
+                <input
+                    type="date"
+                    id="date"
+                    name="date"
+                    required
+                    value={formData.date}
+                    onChange={handleChange}
+                    className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+                />
+            </div>
+            <div className="mb-4">
+                <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="date">
+                    Location  <span className="text-red-500 ml-1">*</span>
+                </label>
+                <input
+                    type="text"
+                    id="location"
+                    name="location"
+                    required
+                    value={formData.location}
+                    onChange={handleChange}
+                    className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+                />
+            </div>
+            <div className="mb-4">
+                <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="title">
+                    Title  <span className="text-red-500 ml-1">*</span>
+                </label>
+                <input
+                    type="text"
+                    id="title"
+                    name="title"
+                    required
+                    value={formData.title}
+                    onChange={handleChange}
+                    className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+                />
+            </div>
+            <div className="mb-4">
+                <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="shortDescription">
+                    Short Description  <span className="text-red-500 ml-1">*</span>
+                </label>
+                <textarea
+                    id="shortDescription"
+                    name="shortDescription"
+                    required
+                    value={formData.shortDescription}
+                    onChange={handleChange}
+                    className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+                ></textarea>
+            </div>
+            <div className="mb-4">
+                <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="content">
+                    Content <span className="text-red-500 ml-1">*</span>
+                </label>
+          <TextEditor value={formData.content} setValue={setContent}/>
+
+            </div>
+            <div className="mb-4">
+                <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="photos">
+                    Photos  <span className="text-red-500 ml-1">*</span>
+                </label>
+                <input
+                    type="file"
+                    id="photos"
+                    name="photos"
+                    onChange={handleChange}
+                    className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+                />
+            </div>
+            <div className="mb-4">
+                <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="videos">
+                    Videos  <span className="text-red-500 ml-1">*</span>
+                </label>
+                <input
+                    type="file"
+                    id="videos"
+                    name="videos"
+                    onChange={handleChange}
+                    className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+                />
+            </div>
+            <div className="mb-4">
+                <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="videos">
+                    Attach a song 
+                </label>
+                <SpotifySearch onSelectTrack={(trackId) => setSpotifyTrackId(trackId)} />
+
+            </div>
+            <div className="flex items-center justify-between">
+                <button
+                    type="submit"
+                    className="bg-[#21552A] hover:bg-[#1E4A24] text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline"
+                >
+                    Submit
+                </button>
+            </div>
+        </form>
+    );
+};
+
+export default NewMoment;
+/**
+ * Functional component for user registration form.
+ * @param {RegisterProps} setIsAuthenticated - Function to set authentication status.
+ * @returns JSX element for user registration form.
+ */
+import React, { useState, FormEvent } from 'react';
+import { register } from '../services/apis';
+import { useNavigate } from 'react-router-dom';
+import { AxiosResponse } from 'axios';
+
+interface RegisterProps {
+  setIsAuthenticated: (auth: boolean) => void;
+}
+
+const Register: React.FC<RegisterProps> = ({ setIsAuthenticated }) => {
+  const [email, setEmail] = useState<string>('');
+  const [password, setPassword] = useState<string>('');
+  const [username, setUsername] = useState<string>('');
+  const [error, setError] = useState<string>('');
+  const navigate = useNavigate();
+
+  const handleSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    const data = {username,password,email}
+    register(data).then((response:AxiosResponse)=>{
+
+      if (response.status.valueOf()===201) {
+        navigate("/login");
+      } else {
+        setError(response.data.message || 'Registration failed');
+      }    },
+  (error:any)=>{
+    setError(error.response?.data?.message || 'Something went wrong');
+
+  })
+
+  };
+
+  return (
+    <div className="flex justify-center items-center mt-20 ">
+      <form className="bg-white p-6 rounded shadow-md w-1/3" onSubmit={handleSubmit}>
+       <h2 className="text-2xl mb-4">Register</h2>
+        <div className="mb-4">
+          <label className="block text-sm font-bold mb-2" htmlFor="email">
+            Username  <span className="text-red-500 ml-1">*</span>
+          </label>
+          <input
+            className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700"
+            id="username"
+            type="username"
+            value={username}
+            required
+            onChange={(e) => setUsername(e.target.value)}
+          />
+        </div>
+        <div className="mb-4">
+          <label className="block text-sm font-bold mb-2" htmlFor="email">
+            Email  <span className="text-red-500 ml-1">*</span>
+          </label>
+          <input
+            className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700"
+            id="email"
+            type="email"
+            value={email}
+            required
+            onChange={(e) => setEmail(e.target.value)}
+          />
+        </div>
+        <div className="mb-4">
+          <label className="block text-sm font-bold mb-2" htmlFor="password">
+            Password  <span className="text-red-500 ml-1">*</span>
+          </label>
+          <input
+            className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700"
+            id="password"
+            type="password"
+            value={password}
+            required
+            onChange={(e) => setPassword(e.target.value)}
+          />
+        </div>
+        <p>{error}</p>
+        <button
+          className="bg-[#21552A] hover:bg-[#1E4A24] text-white font-bold py-2 px-4 rounded"
+          type="submit"
+        >
+          Register
+        </button>
+      </form>
+    </div>
+  );
+};
+
+export default Register;
+
+
+/**
+ * Functions for making various HTTP requests using Axios library.
+ */
+/**
+ * Functions for making various HTTP requests using Axios library.
+ */
+import axios, { AxiosRequestConfig, AxiosResponse } from "axios"
+import { client_id, client_secret } from "./keys";
+
+export const getHeader :()=>AxiosRequestConfig<any>= ()=>{
+    const token = localStorage.getItem('token');
+    return({
+        headers:{
+            Authorization: `Bearer ${token}`
+        }
+    })
+}
+
+export const getMoment=async()=>{
+    return await axios.get<any>("http://127.0.0.1:8000/api/moments",getHeader())
+
+}
+
+
+export const addMoment=async(data:any)=>{
+    
+    return await axios.post<any>("http://127.0.0.1:8000/api/moments/",data,getHeader())
+
+}
+
+
+export const login=async(data:any)=>{
+    
+    return await axios.post<any>("http://127.0.0.1:8000/api/token/",data);
+
+}
+
+export const register=async(data:any)=>{
+    
+    return await axios.post<any>("http://127.0.0.1:8000/api/register/",data);
+
+}
+
+
+export const uploadImage= async(data:any)=>{
+    return await axios.post<any>('http://127.0.0.1:8000/api/upload/',data,getHeader());
+}
+
+
+export const getArticles=async()=>{
+    return await axios.get<any>("http://127.0.0.1:8000/api/articles",getHeader())
+
+}
+
+
+export const getFeedback=async()=>{
+  return await axios.get<any>("http://127.0.0.1:8000/api/feedback/",getHeader())
+}
+
+export const addFeedback=async(data:any)=>{
+  return await axios.post<any>("http://127.0.0.1:8000/api/feedback/",data, getHeader())
+}
+
+
+export const addArticle=async(data:any)=>{
+    
+    return await axios.post<any>("http://127.0.0.1:8000/api/articles/",data,getHeader())
+
+}
+
+export const getUserProfile=async()=>{
+  return await axios.get<any>("http://127.0.0.1:8000/api/user-profile/",getHeader())
+}
+
+const getSpotifyToken = async (): Promise<string | null> => {
+  try {
+    const params = new URLSearchParams();
+    params.append('grant_type', 'client_credentials');
+    params.append('client_id', client_id);
+    params.append('client_secret', client_secret);
+
+    const response = await axios.post('https://accounts.spotify.com/api/token', params, {
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+    });
+
+    return response.data.access_token;
+  } catch (error) {
+    console.error('Error fetching the token', error);
+    return null;
+  }
+};
+
+export default getSpotifyToken;
+
+export const client_id = "f42d884335a0400db3262fd7fb6f8c0e";
+export const client_secret = "8ff2d33cf0ff4aa7a8c64ff54cda1296";
+
+
+
+import React from 'react';
+import { render, screen } from '@testing-library/react';
+import App from './App';
+
+test('renders learn react link', () => {
+  render(<App />);
+  const linkElement = screen.getByText(/learn react/i);
+  expect(linkElement).toBeInTheDocument();
+});
+
+import React, { useEffect, useState } from 'react';
+import { BrowserRouter as Router, Route, Routes, Navigate, Link, useNavigate, NavLink } from 'react-router-dom';
+import Login from './pages/login';
+import Register from './pages/Register';
+import Logout from './pages/logout';
+import Home from './pages/Home';
+import NewMoment from './pages/NewMoment';
+import Articles from './pages/Articles';
+import NewArticle from './pages/NewArticle';
+import FeedbackForm from './pages/FeedbackForm';
+import { getUserProfile } from './services/apis';
+import StreakCount from './components/StreakCount/StreakCount';
+
+
+const App: React.FC = () => {
+    // State to manage user authentication status
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
+   // Function to determine the class name for active and inactive links
+   const [streakCount, setStreakCount] = useState(0);
+
+   useEffect(()=>{
+    if(isAuthenticated){
+    getUserProfile().then((result:any)=>{
+      setStreakCount(result.data.streak_count);
+    })
+    }
+  },[isAuthenticated])
+  const linkStatus = (props:any ) =>(
+    props.isActive
+      ? "text-sm text-[#21552A] font-bold"
+      : "text-sm text-gray-400 hover:text-gray-500")
+  // Separator component for navigation items
+
+  const Separator = ()=>(
+    <li className="text-gray-300">
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" className="w-4 h-4 current-fill" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 5v0m0 7v0m0 7v0m0-13a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z" />
+    </svg>
+  </li>
+  )
+  return (
+    <Router>
+      <nav className="relative px-4 py-4 flex justify-between items-center bg-white">
+		
+      <Link className="flex items-center text-2xl font-bold leading-none" to="/">
+      	<svg className="h-10"  viewBox="0 0 10240 10240" fill='pink'>
+				<path xmlns="http://www.w3.org/2000/svg" d="M8284 9162 c-2 -207 -55 -427 -161 -667 -147 -333 -404 -644 -733 -886 -81 -59 -247 -169 -256 -169 -3 0 -18 -9 -34 -20 -26 -19 -344 -180 -354 -180 -3 0 -29 -11 -58 -24 -227 -101 -642 -225 -973 -290 -125 -25 -397 -70 -480 -80 -22 -3 -76 -9 -120 -15 -100 -13 -142 -17 -357 -36 -29 -2 -98 -7 -153 -10 -267 -15 -436 -28 -525 -40 -14 -2 -45 -7 -70 -10 -59 -8 -99 -14 -130 -20 -14 -3 -41 -7 -60 -11 -19 -3 -39 -7 -45 -8 -5 -2 -28 -6 -50 -10 -234 -45 -617 -165 -822 -257 -23 -10 -45 -19 -48 -19 -7 0 -284 -138 -340 -170 -631 -355 -1107 -842 -1402 -1432 -159 -320 -251 -633 -308 -1056 -26 -190 -27 -635 -1 -832 3 -19 7 -59 10 -89 4 -30 11 -84 17 -120 6 -36 12 -77 14 -91 7 -43 33 -174 39 -190 3 -8 7 -28 9 -45 6 -35 52 -221 72 -285 7 -25 23 -79 35 -120 29 -99 118 -283 189 -389 67 -103 203 -244 286 -298 75 -49 178 -103 196 -103 16 0 27 16 77 110 124 231 304 529 485 800 82 124 153 227 157 230 3 3 28 36 54 74 116 167 384 497 546 671 148 160 448 450 560 542 14 12 54 45 90 75 88 73 219 172 313 238 42 29 77 57 77 62 0 5 -13 34 -29 66 -69 137 -149 405 -181 602 -7 41 -14 82 -15 90 -1 8 -6 46 -10 83 -3 37 -8 77 -10 88 -2 11 -7 65 -11 122 -3 56 -8 104 -9 107 -2 3 0 12 5 19 6 10 10 8 15 -10 10 -34 167 -346 228 -454 118 -210 319 -515 340 -515 4 0 40 18 80 40 230 128 521 255 787 343 118 40 336 102 395 113 28 5 53 11 105 23 25 5 59 12 75 15 17 3 41 8 55 11 34 7 274 43 335 50 152 18 372 29 565 29 194 0 481 -11 489 -19 2 -3 -3 -6 -12 -6 -9 -1 -20 -2 -24 -3 -33 -8 -73 -16 -98 -21 -61 -10 -264 -56 -390 -90 -649 -170 -1243 -437 -1770 -794 -60 -41 -121 -82 -134 -93 l-24 -18 124 -59 c109 -52 282 -116 404 -149 92 -26 192 -51 220 -55 17 -3 64 -12 105 -21 71 -14 151 -28 230 -41 19 -3 46 -7 60 -10 14 -2 45 -7 70 -10 25 -4 56 -8 70 -10 14 -2 53 -7 88 -10 35 -4 71 -8 81 -10 10 -2 51 -6 92 -9 101 -9 141 -14 147 -21 3 -3 -15 -5 -39 -6 -24 0 -52 -2 -62 -4 -21 -4 -139 -12 -307 -22 -242 -14 -700 -7 -880 13 -41 4 -187 27 -250 39 -125 23 -274 68 -373 111 -43 19 -81 34 -86 34 -4 0 -16 -8 -27 -17 -10 -10 -37 -33 -59 -52 -166 -141 -422 -395 -592 -586 -228 -257 -536 -672 -688 -925 -21 -36 -43 -66 -47 -68 -4 -2 -8 -7 -8 -11 0 -5 -24 -48 -54 -97 -156 -261 -493 -915 -480 -935 2 -3 47 -21 101 -38 54 -18 107 -36 118 -41 58 -25 458 -138 640 -181 118 -27 126 -29 155 -35 14 -2 45 -9 70 -14 66 -15 137 -28 300 -55 37 -7 248 -33 305 -39 28 -3 84 -9 125 -13 163 -16 792 -8 913 12 12 2 58 9 102 15 248 35 423 76 665 157 58 19 134 46 170 60 86 33 344 156 348 166 2 4 8 7 13 7 14 0 205 116 303 184 180 126 287 216 466 396 282 281 511 593 775 1055 43 75 178 347 225 455 100 227 236 602 286 790 59 220 95 364 120 485 6 28 45 245 50 275 2 14 7 41 10 60 3 19 8 49 10 65 2 17 6 46 9 65 15 100 35 262 40 335 3 39 8 89 10 112 22 225 33 803 21 1043 -3 41 -7 129 -11 195 -3 66 -8 136 -10 155 -2 19 -6 76 -10 125 -3 50 -8 101 -10 115 -2 14 -6 57 -10 95 -7 72 -12 113 -20 175 -2 19 -7 55 -10 80 -6 46 -43 295 -51 340 -2 14 -9 54 -15 90 -5 36 -16 97 -24 135 -8 39 -17 84 -20 100 -12 68 -18 97 -50 248 -19 87 -47 204 -61 260 -14 56 -27 109 -29 117 -30 147 -232 810 -253 832 -4 4 -7 -23 -8 -60z"></path>
+			</svg>
+      <span className='text-[#804650]'>Rooted</span>
+		</Link>
+    {
+    isAuthenticated ?
+    <> 
+		<ul className="hidden absolute top-1/2 left-1/2 transform -translate-y-1/2 -translate-x-1/2 lg:flex lg:mx-auto lg:flex lg:items-center lg:w-auto lg:space-x-6">
+			<li><NavLink className={linkStatus} to="/">Home</NavLink></li>
+			<Separator/>
+			<li><NavLink className={linkStatus} to="articles">Articles</NavLink></li>
+			<Separator/>
+			<li><NavLink className={linkStatus} to="feedback">Feedback</NavLink></li>
+		</ul>
+    
+    <StreakCount  count={streakCount} maxCount={30}/>
+      <Link className="hidden lg:inline-block lg:ml-3 lg:mr-3 py-2 px-6 bg-gray-50 hover:bg-gray-100 text-sm text-gray-900 font-bold  rounded-xl transition duration-200" to="logout">Logout</Link>
+</>
+:
+      <>
+      
+    <Link className="hidden lg:inline-block lg:ml-auto lg:mr-3 py-2 px-6 bg-gray-50 hover:bg-gray-100 text-sm text-gray-900 font-bold  rounded-xl transition duration-200" to="login">Sign In</Link>
+		<Link className="hidden lg:inline-block py-2 px-6 bg-[#21552A] hover:bg-[#21552A] text-sm text-white font-bold rounded-xl transition duration-200" to="register">Sign up</Link>
+		</>	  
+   
+     }
+  </nav>
+      <div >
+
+        <Routes>
+
+
+        <Route 
+          path="/login" 
+          element={isAuthenticated ? <Navigate to="/" /> : <Login setIsAuthenticated={setIsAuthenticated} />} 
+        />
+        <Route 
+          path="/register" 
+          element={isAuthenticated ? <Navigate to="/" /> : <Register setIsAuthenticated={setIsAuthenticated} />} 
+        />
+        <Route 
+          path="/logout" 
+          element={isAuthenticated ? <Logout setIsAuthenticated={setIsAuthenticated} /> : <Navigate to="/" />} 
+        />
+        <Route 
+          path="/" 
+          element={isAuthenticated ? <Home /> : <Navigate to="/login" />} 
+        />
+        <Route 
+          path="/createMoment" 
+          element={isAuthenticated ? <NewMoment /> : <Navigate to="/login" />} 
+        />
+        <Route 
+          path="/articles" 
+          element={isAuthenticated ? <Articles /> : <Navigate to="/login" />} 
+        />
+          <Route 
+          path="/createArticle" 
+          element={isAuthenticated ? <NewArticle /> : <Navigate to="/login" />} 
+        />
+          <Route 
+          path="/feedback" 
+          element={isAuthenticated ? <FeedbackForm /> : <Navigate to="/login" />} 
+        />
+        <Route 
+          path="*" 
+          element={<Navigate to={isAuthenticated ? "/" : "/login"} />} 
+        />
+
+        </Routes>
+
+
+      </div>
+    </Router>
+  );
+}
+
+export default App;
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+
+
+declare namespace NodeJS {
+    interface ProcessEnv {
+      REACT_APP_SPOTIFY_CLIENT_ID: string;
+      REACT_APP_SPOTIFY_CLIENT_SECRET: string;
+    }
+  }
+  
+import React from 'react';
+import ReactDOM from 'react-dom/client';
+import './index.css';
+import App from './App';
+import reportWebVitals from './reportWebVitals';
+import 'react-vertical-timeline-component/style.min.css';
+
+
+const root = ReactDOM.createRoot(
+  document.getElementById('root') as HTMLElement
+);
+root.render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>
+);
+
+// If you want to start measuring performance in your app, pass a function
+// to log results (for example: reportWebVitals(console.log))
+// or send to an analytics endpoint. Learn more: https://bit.ly/CRA-vitals
+reportWebVitals();
+
+var spotify_client_id = process.env.SPOTIFY_CLIENT_ID
+var spotify_client_secret = process.env.SPOTIFY_CLIENT_SECRET
+
+
+/**
+ * IndicatorComponent is a React functional component that displays a joyride indicator.
+ * @returns JSX element that renders the joyride indicator component.
+ */
+import React, { useState } from 'react';
+import Joyride, { CallBackProps, Step } from 'react-joyride';
+
+interface IndicatorComponentProps {
+    // target:any
+}
+
+// Suggest a moment
+const IndicatorComponent: React.FC<IndicatorComponentProps> = () => {
+    // console.log(target);
+
+  const [run, setRun] = useState(true);
+
+
+  const steps: Step[] = [
+    {
+        content: (
+          <div>
+            Take a moment to revisit this joyful experience and relive the happiness it brought.
+            <br />
+            Click to experience the magic once more!
+          </div>
+        ),
+        disableBeacon: true,
+        disableOverlayClose: true,
+        hideCloseButton: false,
+        hideFooter: true,
+        placement: 'bottom',
+        spotlightClicks: true,
+        styles: {
+          options: {
+            zIndex: 10000,
+          },
+        },
+        target: ".target",
+        title: '🌟 Relive This Highlighted Moment!',
+      },
+  ];
+
+  const handleJoyrideCallback = (data: CallBackProps) => {
+    const { status, type } = data;
+    const finishedStatuses: string[] = ['finished'];
+
+    if (finishedStatuses.includes(status)) {
+      setRun(false);
+    }
+  };
+
+  return (
+    <Joyride
+    callback={handleJoyrideCallback}
+    continuous
+    run={run}
+    
+    steps={steps}
+    hideCloseButton={false}
+  />
+  );
+};
+
+export default IndicatorComponent;
+import MemoryComponent from "./memoryComponent";
+
+export default MemoryComponent;
+/**
+ * Represents a memory component in a vertical timeline.
+ * @param {Memory} memory - An object containing the memory details.
+ * @param {string | undefined} memory.date - The date of the memory.
+ * @param {string} memory.title - The title of the memory.
+ * @param {string | undefined} memory.subTitle - The subtitle of the memory.
+ * @param {string | undefined} memory.description - The description of the memory.
+ * @returns A React functional component representing a memory element in a vertical timeline.
+ */
+import { WrenchIcon } from '@heroicons/react/20/solid';
+import React from 'react';
+import { VerticalTimelineElement } from 'react-vertical-timeline-component';
+
+interface Memory{
+date:string | undefined;
+title: string;
+subTiltle: string | undefined;
+description: string | undefined;
+}
+
+const MemoryComponent: React.FC<Memory> = (memory) => {
+  return (
+    <VerticalTimelineElement
+    className="vertical-timeline-element--work"
+    contentStyle={{ background: 'rgb(33, 150, 243)', color: '#fff' }}
+    contentArrowStyle={{ borderRight: '7px solid  rgb(33, 150, 243)' }}
+    date={memory.date}
+    iconStyle={{ background: 'rgb(33, 150, 243)', color: '#fff' }}
+    icon={<WrenchIcon />}
+  >
+    <h3 className="vertical-timeline-element-title">Creative Director</h3>
+    <h4 className="vertical-timeline-element-subtitle">Miami, FL</h4>
+    <p>
+      Creative Direction, User Experience, Visual Design, Project Management, Team Leading
+    </p>
+  </VerticalTimelineElement>
+  );
+};
+
+export default MemoryComponent;
+/**
+ * A React functional component that renders a Spotify player for a given track ID.
+ * @param {SpotifyPlayerProps} trackId - The ID of the track to be played in the Spotify player.
+ * @returns {JSX.Element} A div containing an iframe with the Spotify player embedded.
+ */
+import React, { useEffect, useState } from 'react';
+
+interface SpotifyPlayerProps {
+  trackId: string;
+}
+
+const SpotifyPlayer: React.FC<SpotifyPlayerProps> = ({trackId }) => {
+
+    return(
+        <div>
+        <iframe
+          style={{ borderRadius: '12px',height:'150px' }}
+          src={`https://open.spotify.com/embed/track/${trackId}?utm_source=generator&autoplay=1`}
+          width="100%"
+          height="352"
+          allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
+          loading="lazy"
+        ></iframe>
+      </div>
+    )
+};
+
+export default SpotifyPlayer;
+
+/**
+ * A React component that allows users to search for tracks on Spotify.
+ * @param {SpotifySearchProps} onSelectTrack - Function to handle when a track is selected.
+ * @returns A search input field that fetches and displays search results from Spotify.
+ */
+import React, { useEffect, useState } from 'react';
+import axios from 'axios';
+import getSpotifyToken from '../../services/apis';
+
+interface SpotifySearchProps {
+  onSelectTrack: (trackId: string) => void;
+}
+
+
+const SpotifySearch: React.FC<SpotifySearchProps> = ({ onSelectTrack }) => {
+  const [query, setQuery] = useState<string>('');
+  const [results, setResults] = useState<any[]>([]);
+  const [showResults, setShowResults] = useState<boolean>(false);
+  const [token, setToken] = useState<string | null>(null);
+
+  useEffect(() => {
+    const fetchToken = async () => {
+      const fetchedToken = await getSpotifyToken();
+      setToken(fetchedToken);
+    };
+
+    fetchToken();
+  }, []);
+  const searchTracks = async (query: string) => {
+    if (query.length === 0) {
+      setResults([]);
+      return;
+    }
+    const { data } = await axios.get('https://api.spotify.com/v1/search', {
+      params: {
+        q: query,
+        type: 'track',
+      },
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+    setResults(data.tracks.items);
+  };
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    setQuery(value);
+    searchTracks(value);
+    setShowResults(true);
+  };
+
+  const handleSelectTrack = (track: any) => {
+    onSelectTrack(track.id);
+    setQuery(track.name);
+    setShowResults(false);
+  };
+
+  return (
+    <div className="relative">
+      <input
+        type="text"
+        value={query}
+        onChange={handleInputChange}
+        placeholder="Search for a song"
+        className="border p-2 w-full"
+      />
+      {showResults && results.length > 0 && (
+        <ul className="absolute bg-white border w-full mt-1 max-h-60 overflow-auto">
+          {results.map((track) => (
+            <li
+              key={track.id}
+              onClick={() => handleSelectTrack(track)}
+              className="p-2 cursor-pointer hover:bg-gray-200"
+            >
+              {track.name} by {track.artists[0].name}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+};
+
+export default SpotifySearch;
+
+/**
+ A React component that allows users track their app usage in consecutive days 
+
+*/
+import { FireIcon } from '@heroicons/react/20/solid';
+import React from 'react';
+import { CircularProgressbar, buildStyles } from 'react-circular-progressbar';
+import 'react-circular-progressbar/dist/styles.css';
+ 
+interface StreakCountProps {
+  count: number;
+  maxCount: number;
+}
+
+const StreakCount: React.FC<StreakCountProps> = ({ count, maxCount }) => {
+  const percentage = (count / maxCount) * 100;
+
+  const tooltipMessage =
+    count > 1
+      ? `Keep going! You have opened the app on ${count} successive days!`
+      : 'You haven\'t opened the app on consecutive days..';
+
+  return (
+    <div className="relative group" style={{ width: "36px", height: "36px", marginLeft: "auto" }}>
+      <CircularProgressbar
+        value={percentage}
+        text={`${count}`}
+        styles={buildStyles({
+          textColor: '#f6a623',
+          pathColor: '#f6a623',
+          trailColor: '#d6d6d6',
+          textSize: "47px",
+        })}
+      />
+      <FireIcon className="absolute text-orange-500" style={{ top: '-3px', right: '17px' }} />
+      <div className="absolute left-1/2 transform -translate-x-1/2 top-full mt-2 w-max p-2 text-sm text-white bg-gray-800 rounded opacity-0 group-hover:opacity-100 transition-opacity duration-300 max-w-xs">
+        {tooltipMessage}
+      </div>
+    </div>
+  );
+};
+
+export default StreakCount;
+
+/**
+ * This module contains the toolbar configuration for a text editor, including options for formatting text
+ * and handling image uploads. The 'image' handler allows users to upload images and insert them into the editor.
+ * @module modules
+ */
+import { AxiosResponse } from "axios";
+import { uploadImage } from "../../services/apis";
+
+const modules = {
+    toolbar: {
+      container: [
+        [{ header: '1' }, { header: '2' }, { font: [] }],
+        [{ size: [] }],
+        ['bold', 'italic', 'underline', 'strike', 'blockquote'],
+        [{ list: 'ordered' }, { list: 'bullet' }, { indent: '-1' }, { indent: '+1' }],
+        ['link', 'image', 'video'],
+        ['clean']
+      ],
+      handlers: {
+        image: function(this: any) {
+          const input = document.createElement('input');
+          input.setAttribute('type', 'file');
+          input.setAttribute('accept', 'image/*');
+          input.click();
+
+          input.onchange = async () => {
+            const file = input.files ? input.files[0] : null;
+            if (file) {
+              const formData = new FormData();
+              formData.append('image', file);
+
+              uploadImage(formData).then(
+                (response:AxiosResponse)=>{
+                  const data = response.data;
+                  const prefix = "http://127.0.0.1:8000";
+                  const imageUrl = prefix+data.image; // Adjust based on your response structure
+
+                  // Ensure the selection range is up to date
+                  const range = this.quill.getSelection(true);
+                  if (range) {
+                    // Insert the image at the current cursor position
+                    this.quill.editor.insertEmbed(range.index, 'image', imageUrl);
+                  }
+                },
+                (error:any)=>{
+                  console.error('Upload failed');
+
+                }
+              )
+              try {
+                // Upload the image to your server
+                const response = await fetch('http://127.0.0.1:8000/api/upload/', {
+                  method: 'POST',
+                  body: formData,
+                });
+
+                if (response.ok) {
+                  const data = await response.json();
+                  const prefix = "http://127.0.0.1:8000";
+                  const imageUrl = prefix+data.image; // Adjust based on your response structure
+
+                  // Ensure the selection range is up to date
+                  const range = this.quill.getSelection(true);
+                  if (range) {
+                    // Insert the image at the current cursor position
+                    this.quill.editor.insertEmbed(range.index, 'image', imageUrl);
+                  }
+                } else {
+                  console.error('Upload failed');
+                }
+              } catch (error) {
+                console.error('Error uploading image:', error);
+              }
+            }
+          };
+        }
+      }
+    }
+  };
+
+  export default modules;
+declare module 'react-quill-image-uploader' {
+    export const ImageUpload: (callback: (url: string) => void) => void;
+  }
+  
+/**
+ * A text editor component using ReactQuill for rich text editing.
+ * @param {TextEditorProps} props - The properties for the TextEditor component.
+ * @param {string} props.value - The current value of the text editor.
+ * @param {function} props.setValue - A function to set the value of the text editor.
+ * @returns {JSX.Element} A React component for text editing.
+ */
+import React, { useState } from 'react';
+import ReactQuill from 'react-quill';
+import 'react-quill/dist/quill.snow.css';
+import { ImageUpload } from 'react-quill-image-uploader';
+import modules from './modulesConfig';
+interface TextEditorProps {
+  value:string,
+  setValue:(s:string)=>void
+}
+
+const TextEditor: React.FC<TextEditorProps> = ({value,setValue}) => {
+
+  
+  return (
+    <ReactQuill value={value} onChange={setValue} modules={modules}  />
+  );
+};
+
+export default TextEditor;
+
+
